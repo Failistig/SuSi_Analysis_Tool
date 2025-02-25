@@ -47,7 +47,7 @@ You also need the following Python libraries:
 
 ### **Installation Steps**  
 1. **Clone this repository**  
-   git clone https://github.com/YOUR_USERNAME/SuSi-Analysis-Tool.git
+   git clone https://github.com/Failistig/SuSi_Analysis_Tool.git
    cd SuSi-Analysis-Tool
 
 
