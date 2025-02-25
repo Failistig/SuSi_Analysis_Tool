@@ -33,7 +33,7 @@ When loading **multiple** measurement files:
 - Plots **only the best-efficiency I-V curve** for each file.  
 - Adds a **custom legend** to explain boxplot elements (median, IQR, outliers).  
 - Allows users to **save** the comparison plots.
-- 
+  
 
 ## **Installation**  
 
