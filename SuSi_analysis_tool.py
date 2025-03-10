@@ -26,7 +26,6 @@ import matplotlib.lines as mlines
 import os
 import numpy as np
 
-
 class SuSiAnalysisTool:
     def __init__(self, root):
         self.root = root
@@ -46,7 +45,9 @@ class SuSiAnalysisTool:
             "x_spacing": 0.2,    # horizontal spacing (wspace)
             "y_spacing": 0.05    # vertical spacing (hspace)
         }
+        # X-axis labels for performance subplots (customizable)
         self.plot_options["x_axis_labels"] = {"Jsc": "", "Voc": "", "Efficiency": "", "Fill Factor": "", "IV": "Voltage [V]"}
+        # Subplot titles and Y-axis labels; if empty, no title is set.
         self.plot_options["subplot_titles"] = {"Jsc": "", "Voc": "", "Efficiency": "", "Fill Factor": "", "IV": ""}
         # Use LaTeX-style labels for J_sc and V_oc:
         self.plot_options["y_axis_labels"] = {"Jsc": r"$J_{sc}$ [mA/cm²]", "Voc": r"$V_{oc}$ [V]",
@@ -352,8 +353,7 @@ class SuSiAnalysisTool:
         win = tk.Toplevel(self.root)
         win.title("Group Files")
         win.geometry("400x300")
-        tk.Label(win, text="Assign group names to each file (files with the same group name will be plotted as one):",
-                 wraplength=380).pack(padx=10, pady=10)
+        tk.Label(win, text="Assign group names to each file (files with the same group name will be plotted together):", wraplength=380).pack(padx=10, pady=10)
         frame = tk.Frame(win)
         frame.pack(padx=10, pady=10, fill="both", expand=True)
         self.group_vars = []
@@ -435,6 +435,7 @@ class SuSiAnalysisTool:
         if not file_paths:
             return
         self.multi_data = []
+        self.group_mapping = {}  # reset grouping on new load
         all_params = []
         for file_path in file_paths:
             try:
@@ -520,6 +521,7 @@ class SuSiAnalysisTool:
         self.canvas.draw()
 
     def generate_plots_single(self):
+        # Single-file mode works as before.
         perf = self.data["performance"].apply(pd.to_numeric, errors="coerce")
         num_columns = perf.shape[1]
         if num_columns % 2 != 0:
@@ -545,6 +547,7 @@ class SuSiAnalysisTool:
                 voc = perf.iloc[1, :].values
                 ff = perf.iloc[2, :].values
                 eff = perf.iloc[3, :].values
+                # If only one pixel exists, duplicate it.
                 if len(jsc) == 1:
                     jsc_fwd, jsc_rev = jsc, jsc
                     voc_fwd, voc_rev = voc, voc
@@ -597,10 +600,9 @@ class SuSiAnalysisTool:
         ms = self.plot_options["marker_size"]
 
         if self.plot_options["separate_forward_reverse"] or self.sep_fwd_rev_var.get():
-            # For J_sc and V_oc: remove x tick labels.
             self.ax_jsc.set_ylabel(self.plot_options["y_axis_labels"].get("Jsc"))
             self.ax_jsc.set_xticks(major_ticks)
-            self.ax_jsc.set_xticklabels([])  # Remove tick labels
+            self.ax_jsc.set_xticklabels([])  # No tick labels for Jsc
             self.ax_jsc.scatter(x_positions_fwd, jsc_fwd, marker=self.plot_options["forward_marker"],
                                 s=ms * 10, color=self.plot_options["forward_color"].get("Jsc", "blue"), label="Fwd")
             self.ax_jsc.scatter(x_positions_rev, jsc_rev, marker=self.plot_options["reverse_marker"],
@@ -610,7 +612,7 @@ class SuSiAnalysisTool:
 
             self.ax_voc.set_ylabel(self.plot_options["y_axis_labels"].get("Voc"))
             self.ax_voc.set_xticks(major_ticks)
-            self.ax_voc.set_xticklabels([])  # Remove tick labels
+            self.ax_voc.set_xticklabels([])  # No tick labels for Voc
             self.ax_voc.scatter(x_positions_fwd, voc_fwd, marker=self.plot_options["forward_marker"],
                                 s=ms * 10, color=self.plot_options["forward_color"].get("Voc", "blue"), label="Fwd")
             self.ax_voc.scatter(x_positions_rev, voc_rev, marker=self.plot_options["reverse_marker"],
@@ -618,62 +620,42 @@ class SuSiAnalysisTool:
             self.ax_voc.legend()
             self.ax_voc.grid(True)
 
-            # For Efficiency and Fill Factor, use boxplots.
+            # For Efficiency and Fill Factor, plot boxplots for each file's forward and reverse data
             self.ax_eff.set_ylabel(self.plot_options["y_axis_labels"].get("Efficiency"))
             self.ax_eff.set_xticks(major_ticks)
             self.ax_eff.set_xticklabels(pixel_labels, rotation=45, ha='right')
-            for i, data in enumerate(eff_data):
-                if data is None or len(data) == 0:
-                    continue
-                data = np.array(data)
-                if len(data) % 2 != 0:
-                    data = data[:-1]
-                n = len(data) // 2
-                if n == 0:
-                    continue
-                fwd = data[::2]
-                rev = data[1::2]
-                self.ax_eff.boxplot(fwd, positions=[x_positions_fwd[i]], widths=0.1,
-                                    patch_artist=True, boxprops=dict(facecolor='none',
-                                                                     color=self.plot_options["forward_color"].get("Efficiency", "blue")),
+            for i in range(len(eff_fwd)):
+                # For each file, boxplot the forward data:
+                self.ax_eff.boxplot([eff_fwd[i]], positions=[x_positions_fwd[i]], widths=0.1,
+                                    patch_artist=True,
+                                    boxprops=dict(facecolor='none', color=self.plot_options["forward_color"].get("Efficiency", "blue")),
                                     medianprops=dict(color='orange'))
-                self.ax_eff.boxplot(rev, positions=[x_positions_rev[i]], widths=0.1,
-                                    patch_artist=True, boxprops=dict(facecolor='none',
-                                                                     color=self.plot_options["reverse_color"].get("Efficiency", "red")),
+                # And boxplot the reverse data:
+                self.ax_eff.boxplot([eff_rev[i]], positions=[x_positions_rev[i]], widths=0.1,
+                                    patch_artist=True,
+                                    boxprops=dict(facecolor='none', color=self.plot_options["reverse_color"].get("Efficiency", "red")),
                                     medianprops=dict(color='orange'))
-            self.ax_eff.legend()
             self.ax_eff.grid(True)
 
             self.ax_ff.set_ylabel(self.plot_options["y_axis_labels"].get("Fill Factor"))
             self.ax_ff.set_xticks(major_ticks)
             self.ax_ff.set_xticklabels(pixel_labels, rotation=45, ha='right')
-            for i, data in enumerate(ff_data):
-                if data is None or len(data) == 0:
-                    continue
-                data = np.array(data)
-                if len(data) % 2 != 0:
-                    data = data[:-1]
-                n = len(data) // 2
-                if n == 0:
-                    continue
-                fwd = data[::2]
-                rev = data[1::2]
-                self.ax_ff.boxplot(fwd, positions=[x_positions_fwd[i]], widths=0.1,
-                                   patch_artist=True, boxprops=dict(facecolor='none',
-                                                                    color=self.plot_options["forward_color"].get("Fill Factor", "blue")),
+            for i in range(len(ff_fwd)):
+                self.ax_ff.boxplot([ff_fwd[i]], positions=[x_positions_fwd[i]], widths=0.1,
+                                   patch_artist=True,
+                                   boxprops=dict(facecolor='none', color=self.plot_options["forward_color"].get("Fill Factor", "blue")),
                                    medianprops=dict(color='orange'))
-                self.ax_ff.boxplot(rev, positions=[x_positions_rev[i]], widths=0.1,
-                                   patch_artist=True, boxprops=dict(facecolor='none',
-                                                                    color=self.plot_options["reverse_color"].get("Fill Factor", "red")),
+                self.ax_ff.boxplot([ff_rev[i]], positions=[x_positions_rev[i]], widths=0.1,
+                                   patch_artist=True,
+                                   boxprops=dict(facecolor='none', color=self.plot_options["reverse_color"].get("Fill Factor", "red")),
                                    medianprops=dict(color='orange'))
-            self.ax_ff.legend()
             self.ax_ff.grid(True)
         else:
             x_positions = np.arange(1, num_pixels + 1)
             pixel_labels = [f"Pixel {i}" for i in x_positions]
             self.ax_jsc.set_ylabel(self.plot_options["y_axis_labels"]["Jsc"])
             self.ax_jsc.set_xticks(x_positions)
-            self.ax_jsc.set_xticklabels([])  # Remove tick labels for J_sc
+            self.ax_jsc.set_xticklabels([])  # No tick labels for Jsc
             self.ax_jsc.scatter(x_positions, jsc_fwd, marker=self.plot_options["forward_marker"],
                                 s=ms * 10, color=self.plot_options["forward_color"]["Jsc"], label="Fwd")
             self.ax_jsc.scatter(x_positions, jsc_rev, marker=self.plot_options["reverse_marker"],
@@ -683,7 +665,7 @@ class SuSiAnalysisTool:
 
             self.ax_voc.set_ylabel(self.plot_options["y_axis_labels"]["Voc"])
             self.ax_voc.set_xticks(x_positions)
-            self.ax_voc.set_xticklabels([])  # Remove tick labels for V_oc
+            self.ax_voc.set_xticklabels([])  # No tick labels for Voc
             self.ax_voc.scatter(x_positions, voc_fwd, marker=self.plot_options["forward_marker"],
                                 s=ms * 10, color=self.plot_options["forward_color"]["Voc"], label="Fwd")
             self.ax_voc.scatter(x_positions, voc_rev, marker=self.plot_options["reverse_marker"],
@@ -711,7 +693,7 @@ class SuSiAnalysisTool:
             self.ax_ff.legend()
             self.ax_ff.grid(True)
 
-        # I-V curves (Single File)
+        # I-V curves (Single File mode)
         self.ax_iv.clear()
         if self.data.get("iv") is not None:
             iv = self.data["iv"].apply(pd.to_numeric, errors="coerce")
@@ -773,12 +755,15 @@ class SuSiAnalysisTool:
                 grouped = {}
                 for group, indices in self.group_mapping.items():
                     group_perf = [self.multi_data[i]["performance"] for i in indices]
-                    # Concatenate without averaging so all data points are retained.
+                    # Concatenate without averaging so that all data points are retained.
                     combined_perf = pd.concat(group_perf, axis=1)
                     grouped[group] = {"performance": combined_perf, "iv": None}
                     group_iv_list = [self.multi_data[i]["iv"] for i in indices if self.multi_data[i]["iv"] is not None]
                     if group_iv_list:
                         iv_combined = pd.concat(group_iv_list, axis=1)
+                        # If the IV data has only one column, duplicate it.
+                        if iv_combined.shape[1] == 1:
+                            iv_combined = pd.concat([iv_combined, iv_combined], axis=1)
                         grouped[group]["iv"] = iv_combined
                 labels = list(grouped.keys())
                 new_multi = []
@@ -786,17 +771,19 @@ class SuSiAnalysisTool:
                     new_multi.append({"filename": group, "performance": d["performance"], "iv": d["iv"]})
                 self.multi_data = new_multi
                 self.custom_labels_var.set(",".join(labels))
+                # Clear group_mapping so that grouping is applied only once.
+                self.group_mapping = {}
             # Prepare lists for each metric.
             jsc_data, voc_data, eff_data, ff_data = [], [], [], []
             iv_curves = []
             for d in self.multi_data:
                 perf = d["performance"].apply(pd.to_numeric, errors="coerce")
+                # If there is only one column, duplicate it so forward and reverse exist.
                 if perf.shape[1] == 1:
                     jsc_vals = perf.iloc[0, :].values.astype(float)
                     voc_vals = perf.iloc[1, :].values.astype(float)
                     ff_vals = perf.iloc[2, :].values.astype(float)
                     eff_vals = perf.iloc[3, :].values.astype(float)
-                    # Duplicate so that forward and reverse exist
                     jsc_vals = np.concatenate((jsc_vals, jsc_vals))
                     voc_vals = np.concatenate((voc_vals, voc_vals))
                     ff_vals = np.concatenate((ff_vals, ff_vals))
@@ -810,11 +797,12 @@ class SuSiAnalysisTool:
                 voc_data.append(voc_vals)
                 eff_data.append(eff_vals)
                 ff_data.append(ff_vals)
+                # Determine pixel index for I-V: if only one column exists, use index 0;
+                # otherwise, choose based on best efficiency (do not average; just use the group’s first available set).
                 if len(jsc_vals) == 1:
                     pixel_index = 0
                 else:
-                    best_idx = np.argmax(eff_vals)
-                    pixel_index = best_idx // 2
+                    pixel_index = 0  # For multiple files grouped, we simply use the first pair for I-V plotting.
                 if d.get("iv") is not None:
                     iv = d["iv"].apply(pd.to_numeric, errors="coerce") if isinstance(d["iv"], pd.DataFrame) else d["iv"]
                     if isinstance(iv, pd.DataFrame):
@@ -839,9 +827,9 @@ class SuSiAnalysisTool:
                         iv_curves.append((None, None, d["filename"]))
                 else:
                     iv_curves.append((None, None, d["filename"]))
+            # Now plot performance data:
             for ax in [self.ax_jsc, self.ax_voc, self.ax_eff, self.ax_ff, self.ax_iv]:
                 ax.clear()
-            # Plotting:
             if self.plot_options["separate_forward_reverse"] or self.sep_fwd_rev_var.get():
                 offset = 0.2
                 nfiles = len(self.multi_data)
@@ -861,17 +849,22 @@ class SuSiAnalysisTool:
                             continue
                         fwd = data[::2]
                         rev = data[1::2]
-                        # Use boxplot for each file's forward and reverse data points.
+                        # Plot boxplots for forward and reverse separately:
                         ax.boxplot(fwd, positions=[x_positions_fwd[i]], widths=0.1,
-                                   patch_artist=True, boxprops=dict(facecolor='none',
-                                                                    color=self.plot_options["forward_color"].get("Efficiency", "blue")),
+                                   patch_artist=True,
+                                   boxprops=dict(facecolor='none',
+                                                 color=self.plot_options["forward_color"].get("Efficiency", "blue")),
                                    medianprops=dict(color='orange'))
                         ax.boxplot(rev, positions=[x_positions_rev[i]], widths=0.1,
-                                   patch_artist=True, boxprops=dict(facecolor='none',
-                                                                    color=self.plot_options["reverse_color"].get("Efficiency", "red")),
+                                   patch_artist=True,
+                                   boxprops=dict(facecolor='none',
+                                                 color=self.plot_options["reverse_color"].get("Efficiency", "red")),
                                    medianprops=dict(color='orange'))
-                        ax.scatter(np.full(len(fwd), x_positions_fwd[i]), fwd, s=20, color='darkblue', alpha=0.6)
-                        ax.scatter(np.full(len(rev), x_positions_rev[i]), rev, s=20, color='darkred', alpha=0.6)
+                        # Also scatter all individual data points:
+                        ax.scatter(np.full(len(fwd), x_positions_fwd[i]), fwd,
+                                   s=20, color='darkblue', alpha=0.6)
+                        ax.scatter(np.full(len(rev), x_positions_rev[i]), rev,
+                                   s=20, color='darkred', alpha=0.6)
                     ax.set_ylabel(ylabel)
                     ax.set_xticks(major_ticks)
                     if remove_xticklabels:
@@ -934,7 +927,7 @@ class SuSiAnalysisTool:
                 self.ax_ff.set_xticks(x_positions)
                 self.ax_ff.set_xticklabels(labels, rotation=45, ha='right')
                 self.ax_ff.grid(True)
-            # Combined legend for boxplots (optional)
+            # Add a combined legend for boxplots (optional)
             median_line = mlines.Line2D([], [], color='orange', linestyle='-', linewidth=2, label='Median')
             box_line = mpatches.Patch(facecolor='none', edgecolor='black', label='IQR')
             outlier_marker = mlines.Line2D([], [], marker='o', color='black', linestyle='None', markersize=4, label='Outliers')
@@ -945,7 +938,6 @@ class SuSiAnalysisTool:
             self.ax_iv.clear()
             colors = ['blue', 'red', 'green', 'orange', 'purple', 'cyan', 'magenta', 'brown', 'pink', 'gray', 'olive', 'teal']
             for i, item in enumerate(iv_curves):
-                # For grouped files, iv_curves returns a tuple (voltage, (fwd, rev), filename)
                 voltage = item[0]
                 y_item = item[1]
                 fname = item[2]
@@ -1016,6 +1008,7 @@ class SuSiAnalysisTool:
         if not file_paths:
             return
         self.multi_data = []
+        self.group_mapping = {}  # reset grouping on new load
         all_params = []
         for file_path in file_paths:
             try:
@@ -1084,7 +1077,6 @@ class SuSiAnalysisTool:
             self.params_text.insert(tk.END, combined_params)
             self.params_text.config(state="disabled")
             print("Multiple files loaded successfully!")
-
 
 if __name__ == "__main__":
     root = tk.Tk()
