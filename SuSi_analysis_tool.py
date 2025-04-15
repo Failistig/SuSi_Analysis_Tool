@@ -11,8 +11,8 @@ set filter ranges (including a voltage filter for I–V curves), group files
 (if they are from the same device), and choose whether to separate forward
 and reverse data on the x‑axis.
 
-Author: Your Name
-Date: 2023-XX-XX
+Author: Florian Kalaß
+Date: 15.04.2025
 """
 
 import tkinter as tk
@@ -343,9 +343,6 @@ class SuSiAnalysisTool:
                 messagebox.showerror("Error", f"Invalid input: {ex}")
         tk.Button(win, text="Apply Filters", command=apply_filters).grid(row=5, column=0, columnspan=2, pady=10)
 
-    ##########################################
-    # Grouping Window for Multiple Files
-    ##########################################
     def open_group_window(self):
         if not self.multi_data:
             messagebox.showinfo("Info", "Load multiple files first.")
@@ -635,7 +632,7 @@ class SuSiAnalysisTool:
                                     patch_artist=True,
                                     boxprops=dict(facecolor='none', color=self.plot_options["reverse_color"].get("Efficiency", "red")),
                                     medianprops=dict(color='orange'))
-            self.ax_eff.grid(True)
+            self.ax_eff.grid(False)
 
             self.ax_ff.set_ylabel(self.plot_options["y_axis_labels"].get("Fill Factor"))
             self.ax_ff.set_xticks(major_ticks)
@@ -681,7 +678,7 @@ class SuSiAnalysisTool:
             self.ax_eff.scatter(x_positions, eff_rev, marker=self.plot_options["reverse_marker"],
                                 s=ms * 10, color=self.plot_options["reverse_color"]["Efficiency"], label="Rev")
             self.ax_eff.legend()
-            self.ax_eff.grid(True)
+            self.ax_eff.grid(False)
 
             self.ax_ff.set_ylabel(self.plot_options["y_axis_labels"]["Fill Factor"])
             self.ax_ff.set_xticks(x_positions)
@@ -742,6 +739,7 @@ class SuSiAnalysisTool:
 
     def generate_plots_multiple(self):
         try:
+            # Extract custom labels or use filenames
             custom = self.custom_labels_var.get().strip()
             if custom:
                 labels = [lab.strip() for lab in custom.split(",")]
@@ -750,18 +748,17 @@ class SuSiAnalysisTool:
                     return
             else:
                 labels = [d["filename"] for d in self.multi_data]
-            # --- Grouping Section ---
+
+            # --- Grouping Section (if applicable) ---
             if self.group_mapping:
                 grouped = {}
                 for group, indices in self.group_mapping.items():
                     group_perf = [self.multi_data[i]["performance"] for i in indices]
-                    # Concatenate without averaging so that all data points are retained.
                     combined_perf = pd.concat(group_perf, axis=1)
                     grouped[group] = {"performance": combined_perf, "iv": None}
                     group_iv_list = [self.multi_data[i]["iv"] for i in indices if self.multi_data[i]["iv"] is not None]
                     if group_iv_list:
                         iv_combined = pd.concat(group_iv_list, axis=1)
-                        # If the IV data has only one column, duplicate it.
                         if iv_combined.shape[1] == 1:
                             iv_combined = pd.concat([iv_combined, iv_combined], axis=1)
                         grouped[group]["iv"] = iv_combined
@@ -771,38 +768,28 @@ class SuSiAnalysisTool:
                     new_multi.append({"filename": group, "performance": d["performance"], "iv": d["iv"]})
                 self.multi_data = new_multi
                 self.custom_labels_var.set(",".join(labels))
-                # Clear group_mapping so that grouping is applied only once.
                 self.group_mapping = {}
-            # Prepare lists for each metric.
-            jsc_data, voc_data, eff_data, ff_data = [], [], [], []
+
+            # --- Prepare Performance Data Arrays ---
+            jsc_data, voc_data, ff_data, eff_data = [], [], [], []
             iv_curves = []
             for d in self.multi_data:
                 perf = d["performance"].apply(pd.to_numeric, errors="coerce")
-                # If there is only one column, duplicate it so forward and reverse exist.
-                if perf.shape[1] == 1:
+                # Expected row order: 0: J_sc, 1: V_oc, 2: Fill Factor, 3: Efficiency
+                try:
                     jsc_vals = perf.iloc[0, :].values.astype(float)
                     voc_vals = perf.iloc[1, :].values.astype(float)
                     ff_vals = perf.iloc[2, :].values.astype(float)
                     eff_vals = perf.iloc[3, :].values.astype(float)
-                    jsc_vals = np.concatenate((jsc_vals, jsc_vals))
-                    voc_vals = np.concatenate((voc_vals, voc_vals))
-                    ff_vals = np.concatenate((ff_vals, ff_vals))
-                    eff_vals = np.concatenate((eff_vals, eff_vals))
-                else:
-                    jsc_vals = perf.iloc[0, :].values.astype(float)
-                    voc_vals = perf.iloc[1, :].values.astype(float)
-                    ff_vals = perf.iloc[2, :].values.astype(float)
-                    eff_vals = perf.iloc[3, :].values.astype(float)
+                except Exception as ex:
+                    print(f"Warning: Could not extract performance metrics from file {d['filename']}: {ex}")
+                    continue
                 jsc_data.append(jsc_vals)
                 voc_data.append(voc_vals)
-                eff_data.append(eff_vals)
                 ff_data.append(ff_vals)
-                # Determine pixel index for I-V: if only one column exists, use index 0;
-                # otherwise, choose based on best efficiency (do not average; just use the group’s first available set).
-                if len(jsc_vals) == 1:
-                    pixel_index = 0
-                else:
-                    pixel_index = 0  # For multiple files grouped, we simply use the first pair for I-V plotting.
+                eff_data.append(eff_vals)
+
+                # Process IV curves
                 if d.get("iv") is not None:
                     iv = d["iv"].apply(pd.to_numeric, errors="coerce") if isinstance(d["iv"], pd.DataFrame) else d["iv"]
                     if isinstance(iv, pd.DataFrame):
@@ -811,11 +798,13 @@ class SuSiAnalysisTool:
                         mask = (voltage >= vlow) & (voltage <= vhigh)
                         voltage = voltage[mask]
                         num_iv_cols = iv.shape[1]
-                        colors = ['blue', 'red', 'green', 'orange', 'purple', 'cyan', 'magenta', 'brown', 'pink', 'gray', 'olive', 'teal']
+                        colors = ['blue', 'red', 'green', 'orange', 'purple', 'cyan', 'magenta', 'brown', 'pink',
+                                  'gray']
                         if num_iv_cols == 2:
                             y_data = iv.iloc[:, 1][mask]
                             iv_curves.append((voltage, y_data, d["filename"]))
                         elif num_iv_cols >= 3:
+                            pixel_index = 0  # Use first available pixel pair
                             col_fwd = 2 * pixel_index + 1
                             fwd = iv.iloc[:, col_fwd][mask] if col_fwd < num_iv_cols else None
                             col_rev = col_fwd + 1
@@ -827,59 +816,179 @@ class SuSiAnalysisTool:
                         iv_curves.append((None, None, d["filename"]))
                 else:
                     iv_curves.append((None, None, d["filename"]))
-            # Now plot performance data:
+
+            # --- Define Local Filtering Function ---
+            def apply_filter(values, param):
+                low, high = self.filter_options.get(param, (-np.inf, np.inf))
+                values = np.array(values, dtype=float)
+                values[(values < low) | (values > high)] = np.nan
+                return values
+
+            jsc_data = [apply_filter(arr, "Jsc") for arr in jsc_data]
+            voc_data = [apply_filter(arr, "Voc") for arr in voc_data]
+            ff_data = [apply_filter(arr, "Fill Factor") for arr in ff_data]
+            eff_data = [apply_filter(arr, "Efficiency") for arr in eff_data]
+
+            # --- Clear Previous Plots ---
             for ax in [self.ax_jsc, self.ax_voc, self.ax_eff, self.ax_ff, self.ax_iv]:
                 ax.clear()
+
+            ms = self.plot_options["marker_size"]
+
+            # --- Plot Performance Metrics ---
             if self.plot_options["separate_forward_reverse"] or self.sep_fwd_rev_var.get():
                 offset = 0.2
                 nfiles = len(self.multi_data)
                 x_positions_fwd = np.array([i + 1 for i in range(nfiles)])
                 x_positions_rev = x_positions_fwd + offset
-                major_ticks = (x_positions_fwd + x_positions_rev) / 2
 
-                def plot_box_scatter(ax, data_list, ylabel, remove_xticklabels):
-                    for i, data in enumerate(data_list):
-                        if data is None or len(data) == 0:
-                            continue
-                        data = np.array(data)
-                        if len(data) % 2 != 0:
-                            data = data[:-1]
-                        n = len(data) // 2
-                        if n == 0:
-                            continue
-                        fwd = data[::2]
-                        rev = data[1::2]
-                        # Plot boxplots for forward and reverse separately:
-                        ax.boxplot(fwd, positions=[x_positions_fwd[i]], widths=0.1,
-                                   patch_artist=True,
-                                   boxprops=dict(facecolor='none',
-                                                 color=self.plot_options["forward_color"].get("Efficiency", "blue")),
-                                   medianprops=dict(color='orange'))
-                        ax.boxplot(rev, positions=[x_positions_rev[i]], widths=0.1,
-                                   patch_artist=True,
-                                   boxprops=dict(facecolor='none',
-                                                 color=self.plot_options["reverse_color"].get("Efficiency", "red")),
-                                   medianprops=dict(color='orange'))
-                        # Also scatter all individual data points:
-                        ax.scatter(np.full(len(fwd), x_positions_fwd[i]), fwd,
-                                   s=20, color='darkblue', alpha=0.6)
-                        ax.scatter(np.full(len(rev), x_positions_rev[i]), rev,
-                                   s=20, color='darkred', alpha=0.6)
-                    ax.set_ylabel(ylabel)
-                    ax.set_xticks(major_ticks)
-                    if remove_xticklabels:
-                        ax.set_xticklabels([])
-                    else:
-                        ax.set_xticklabels(labels, rotation=45, ha='right')
-                    ax.grid(True)
+                # Build tick positions and labels for Efficiency and Fill Factor only:
+                tick_positions = []
+                tick_labels = []
+                for i in range(nfiles):
+                    tick_positions.append(x_positions_fwd[i])
+                    tick_labels.append(f"{labels[i]} Fwd")
+                    tick_positions.append(x_positions_rev[i])
+                    tick_labels.append(f"{labels[i]} Rev")
 
-                # For Jsc and Voc, remove tick labels.
-                plot_box_scatter(self.ax_jsc, jsc_data, r"$J_{sc}$ [mA/cm²]", remove_xticklabels=True)
-                plot_box_scatter(self.ax_voc, voc_data, r"$V_{oc}$ [V]", remove_xticklabels=True)
-                # For Efficiency and Fill Factor, show tick labels.
-                plot_box_scatter(self.ax_eff, eff_data, "Efficiency [%]", remove_xticklabels=False)
-                plot_box_scatter(self.ax_ff, ff_data, "Fill Factor [%]", remove_xticklabels=False)
+                # J_sc Plot: annotate medians and hide x tick labels.
+                for i, data in enumerate(jsc_data):
+                    if data is None or len(data) == 0:
+                        continue
+                    if len(data) % 2 != 0:
+                        data = data[:-1]
+                    fwd = data[::2]
+                    rev = data[1::2]
+                    self.ax_jsc.boxplot(fwd, positions=[x_positions_fwd[i]], widths=0.1,
+                                        patch_artist=True,
+                                        boxprops=dict(facecolor='none',
+                                                      color=self.plot_options["forward_color"].get("Jsc", "blue")),
+                                        medianprops=dict(color='orange'))
+                    self.ax_jsc.boxplot(rev, positions=[x_positions_rev[i]], widths=0.1,
+                                        patch_artist=True,
+                                        boxprops=dict(facecolor='none',
+                                                      color=self.plot_options["reverse_color"].get("Jsc", "red")),
+                                        medianprops=dict(color='orange'))
+                    self.ax_jsc.scatter(np.full(len(fwd), x_positions_fwd[i]), fwd,
+                                        s=20, color='darkblue', alpha=0.6)
+                    self.ax_jsc.scatter(np.full(len(rev), x_positions_rev[i]), rev,
+                                        s=20, color='darkred', alpha=0.6)
+                    med_fwd = np.nanmedian(fwd)
+                    med_rev = np.nanmedian(rev)
+                    # Shift median annotation slightly to the right (fwd) and right (rev) for clarity.
+                    self.ax_jsc.text(x_positions_fwd[i] + 0.05, med_fwd, f"{med_fwd:.2f}", fontsize=8,
+                                     color='black', ha="left", va="center")
+                    self.ax_jsc.text(x_positions_rev[i] + 0.05, med_rev, f"{med_rev:.2f}", fontsize=8,
+                                     color='black', ha="left", va="center")
+                self.ax_jsc.set_xticks(x_positions_fwd)  # Ticks present but no labels
+                self.ax_jsc.set_xticklabels([])
+                self.ax_jsc.set_ylabel(self.plot_options["y_axis_labels"].get("Jsc", r"$J_{sc}$ [mA/cm²]"))
+                self.ax_jsc.grid(True)
+
+                # V_oc Plot: annotate medians and hide x tick labels.
+                for i, data in enumerate(voc_data):
+                    if data is None or len(data) == 0:
+                        continue
+                    if len(data) % 2 != 0:
+                        data = data[:-1]
+                    fwd = data[::2]
+                    rev = data[1::2]
+                    self.ax_voc.boxplot(fwd, positions=[x_positions_fwd[i]], widths=0.1,
+                                        patch_artist=True,
+                                        boxprops=dict(facecolor='none',
+                                                      color=self.plot_options["forward_color"].get("Voc", "blue")),
+                                        medianprops=dict(color='orange'))
+                    self.ax_voc.boxplot(rev, positions=[x_positions_rev[i]], widths=0.1,
+                                        patch_artist=True,
+                                        boxprops=dict(facecolor='none',
+                                                      color=self.plot_options["reverse_color"].get("Voc", "red")),
+                                        medianprops=dict(color='orange'))
+                    self.ax_voc.scatter(np.full(len(fwd), x_positions_fwd[i]), fwd,
+                                        s=20, color='darkblue', alpha=0.6)
+                    self.ax_voc.scatter(np.full(len(rev), x_positions_rev[i]), rev,
+                                        s=20, color='darkred', alpha=0.6)
+                    med_fwd = np.nanmedian(fwd)
+                    med_rev = np.nanmedian(rev)
+                    self.ax_voc.text(x_positions_fwd[i] + 0.05, med_fwd, f"{med_fwd:.2f}", fontsize=8,
+                                     color='black', ha="left", va="center")
+                    self.ax_voc.text(x_positions_rev[i] + 0.05, med_rev, f"{med_rev:.2f}", fontsize=8,
+                                     color='black', ha="left", va="center")
+                self.ax_voc.set_xticks(x_positions_fwd)
+                self.ax_voc.set_xticklabels([])
+                self.ax_voc.set_ylabel(self.plot_options["y_axis_labels"].get("Voc", r"$V_{oc}$ [V]"))
+                self.ax_voc.grid(True)
+
+                # Efficiency Plot: annotate medians and show x tick labels.
+                for i, data in enumerate(eff_data):
+                    if data is None or len(data) == 0:
+                        continue
+                    if len(data) % 2 != 0:
+                        data = data[:-1]
+                    fwd = data[::2]
+                    rev = data[1::2]
+                    self.ax_eff.boxplot(fwd, positions=[x_positions_fwd[i]], widths=0.1,
+                                        patch_artist=True,
+                                        boxprops=dict(facecolor='none',
+                                                      color=self.plot_options["forward_color"].get("Efficiency",
+                                                                                                   "blue")),
+                                        medianprops=dict(color='orange'))
+                    self.ax_eff.boxplot(rev, positions=[x_positions_rev[i]], widths=0.1,
+                                        patch_artist=True,
+                                        boxprops=dict(facecolor='none',
+                                                      color=self.plot_options["reverse_color"].get("Efficiency",
+                                                                                                   "red")),
+                                        medianprops=dict(color='orange'))
+                    self.ax_eff.scatter(np.full(len(fwd), x_positions_fwd[i]), fwd,
+                                        s=20, color='darkblue', alpha=0.6)
+                    self.ax_eff.scatter(np.full(len(rev), x_positions_rev[i]), rev,
+                                        s=20, color='darkred', alpha=0.6)
+                    med_fwd = np.nanmedian(fwd)
+                    med_rev = np.nanmedian(rev)
+                    self.ax_eff.text(x_positions_fwd[i] + 0.05, med_fwd, f"{med_fwd:.2f}", fontsize=8,
+                                     color='black', ha="left", va="center")
+                    self.ax_eff.text(x_positions_rev[i] + 0.05, med_rev, f"{med_rev:.2f}", fontsize=8,
+                                     color='black', ha="left", va="center")
+                self.ax_eff.set_xticks(tick_positions)
+                self.ax_eff.set_xticklabels(tick_labels, rotation=45, ha='right')
+                self.ax_eff.set_ylabel(self.plot_options["y_axis_labels"].get("Efficiency", "Efficiency [%]"))
+                self.ax_eff.grid(True)
+
+                # Fill Factor Plot: annotate medians and show x tick labels.
+                for i, data in enumerate(ff_data):
+                    if data is None or len(data) == 0:
+                        continue
+                    if len(data) % 2 != 0:
+                        data = data[:-1]
+                    fwd = data[::2]
+                    rev = data[1::2]
+                    self.ax_ff.boxplot(fwd, positions=[x_positions_fwd[i]], widths=0.1,
+                                       patch_artist=True,
+                                       boxprops=dict(facecolor='none',
+                                                     color=self.plot_options["forward_color"].get("Fill Factor",
+                                                                                                  "blue")),
+                                       medianprops=dict(color='orange'))
+                    self.ax_ff.boxplot(rev, positions=[x_positions_rev[i]], widths=0.1,
+                                       patch_artist=True,
+                                       boxprops=dict(facecolor='none',
+                                                     color=self.plot_options["reverse_color"].get("Fill Factor",
+                                                                                                  "red")),
+                                       medianprops=dict(color='orange'))
+                    self.ax_ff.scatter(np.full(len(fwd), x_positions_fwd[i]), fwd,
+                                       s=20, color='darkblue', alpha=0.6)
+                    self.ax_ff.scatter(np.full(len(rev), x_positions_rev[i]), rev,
+                                       s=20, color='darkred', alpha=0.6)
+                    med_fwd = np.nanmedian(fwd)
+                    med_rev = np.nanmedian(rev)
+                    self.ax_ff.text(x_positions_fwd[i] + 0.05, med_fwd, f"{med_fwd:.2f}", fontsize=8,
+                                    color='black', ha="left", va="center")
+                    self.ax_ff.text(x_positions_rev[i] + 0.05, med_rev, f"{med_rev:.2f}", fontsize=8,
+                                    color='black', ha="left", va="center")
+                self.ax_ff.set_xticks(tick_positions)
+                self.ax_ff.set_xticklabels(tick_labels, rotation=45, ha='right')
+                self.ax_ff.set_ylabel(self.plot_options["y_axis_labels"].get("Fill Factor", "Fill Factor [%]"))
+                self.ax_ff.grid(True)
             else:
+                # Non-separate mode: one x tick per file; median annotations always shown.
                 x_positions = np.arange(1, len(self.multi_data) + 1)
                 boxprops = dict(facecolor='none', color='black')
                 medianprops = dict(color='orange', linewidth=2)
@@ -891,9 +1000,11 @@ class SuSiAnalysisTool:
                 for i, data in enumerate(jsc_data):
                     x = np.random.normal(x_positions[i], 0.05, size=len(data))
                     self.ax_jsc.scatter(x, data, alpha=0.6, s=20, color='darkblue')
-                self.ax_jsc.set_ylabel(r"$J_{sc}$ [mA/cm²]")
-                self.ax_jsc.set_xticks(x_positions)
-                self.ax_jsc.set_xticklabels([])  # Remove tick labels
+                    med = np.nanmedian(data)
+                    self.ax_jsc.text(x_positions[i] + 0.05, med, f"{med:.2f}", fontsize=8, color='black',
+                                     ha="left", va="center")
+                self.ax_jsc.set_ylabel(self.plot_options["y_axis_labels"].get("Jsc", r"$J_{sc}$ [mA/cm²]"))
+                self.ax_jsc.set_xticklabels([])  # Hide x tick labels for J_sc
                 self.ax_jsc.grid(True)
 
                 self.ax_voc.boxplot(voc_data, positions=x_positions, patch_artist=True,
@@ -902,8 +1013,11 @@ class SuSiAnalysisTool:
                 for i, data in enumerate(voc_data):
                     x = np.random.normal(x_positions[i], 0.05, size=len(data))
                     self.ax_voc.scatter(x, data, alpha=0.6, s=20, color='darkred')
-                self.ax_voc.set_ylabel(r"$V_{oc}$ [V]")
-                self.ax_voc.set_xticklabels([])  # Remove tick labels
+                    med = np.nanmedian(data)
+                    self.ax_voc.text(x_positions[i] + 0.05, med, f"{med:.2f}", fontsize=8, color='black',
+                                     ha="left", va="center")
+                self.ax_voc.set_ylabel(self.plot_options["y_axis_labels"].get("Voc", r"$V_{oc}$ [V]"))
+                self.ax_voc.set_xticklabels([])  # Hide tick labels for V_oc
                 self.ax_voc.grid(True)
 
                 self.ax_eff.boxplot(eff_data, positions=x_positions, patch_artist=True,
@@ -912,9 +1026,12 @@ class SuSiAnalysisTool:
                 for i, data in enumerate(eff_data):
                     x = np.random.normal(x_positions[i], 0.05, size=len(data))
                     self.ax_eff.scatter(x, data, alpha=0.6, s=20, color='darkgreen')
-                self.ax_eff.set_ylabel("Efficiency [%]")
-                self.ax_eff.set_xticks(x_positions)
+                    med = np.nanmedian(data)
+                    self.ax_eff.text(x_positions[i] + 0.05, med, f"{med:.2f}", fontsize=8, color='black',
+                                     ha="left", va="center")
+                self.ax_eff.set_ylabel(self.plot_options["y_axis_labels"].get("Efficiency", "Efficiency [%]"))
                 self.ax_eff.set_xticklabels(labels, rotation=45, ha='right')
+                self.ax_eff.set_xticks(x_positions)
                 self.ax_eff.grid(True)
 
                 self.ax_ff.boxplot(ff_data, positions=x_positions, patch_artist=True,
@@ -923,20 +1040,17 @@ class SuSiAnalysisTool:
                 for i, data in enumerate(ff_data):
                     x = np.random.normal(x_positions[i], 0.05, size=len(data))
                     self.ax_ff.scatter(x, data, alpha=0.6, s=20, color='darkmagenta')
-                self.ax_ff.set_ylabel("Fill Factor [%]")
-                self.ax_ff.set_xticks(x_positions)
+                    med = np.nanmedian(data)
+                    self.ax_ff.text(x_positions[i] + 0.05, med, f"{med:.2f}", fontsize=8, color='black',
+                                    ha="left", va="center")
+                self.ax_ff.set_ylabel(self.plot_options["y_axis_labels"].get("Fill Factor", "Fill Factor [%]"))
                 self.ax_ff.set_xticklabels(labels, rotation=45, ha='right')
+                self.ax_ff.set_xticks(x_positions)
                 self.ax_ff.grid(True)
-            # Add a combined legend for boxplots (optional)
-            median_line = mlines.Line2D([], [], color='orange', linestyle='-', linewidth=2, label='Median')
-            box_line = mpatches.Patch(facecolor='none', edgecolor='black', label='IQR')
-            outlier_marker = mlines.Line2D([], [], marker='o', color='black', linestyle='None', markersize=4, label='Outliers')
-            data_point = mlines.Line2D([], [], marker='o', color='darkblue', linestyle='None', markersize=5, label='Data Points')
-            self.fig.legend(handles=[median_line, box_line, outlier_marker, data_point],
-                            loc='upper left', bbox_to_anchor=(0.01, 1.0), ncol=4, fontsize=9)
-            # I-V curves (Multiple Files)
+
+            # --- Plot IV Curves (common for both modes) ---
             self.ax_iv.clear()
-            colors = ['blue', 'red', 'green', 'orange', 'purple', 'cyan', 'magenta', 'brown', 'pink', 'gray', 'olive', 'teal']
+            colors = ['blue', 'red', 'green', 'orange', 'purple', 'cyan', 'magenta', 'brown', 'pink', 'gray']
             for i, item in enumerate(iv_curves):
                 voltage = item[0]
                 y_item = item[1]
@@ -967,6 +1081,15 @@ class SuSiAnalysisTool:
             self.ax_iv.set_ylabel(self.plot_options["y_axis_labels"].get("IV", "J [mA/cm²]"))
             self.ax_iv.legend(loc='upper left')
             self.ax_iv.grid(True)
+
+            # --- Overall Legend (top left, one row) ---
+            median_line = mlines.Line2D([], [], color='orange', linestyle='-', linewidth=2, label='Median')
+            box_patch = mpatches.Patch(facecolor='none', edgecolor='black', label='IQR Box')
+            data_marker = mlines.Line2D([], [], marker='o', color='black', linestyle='None', markersize=5,
+                                        label='Data Points')
+            self.fig.legend(handles=[median_line, box_patch, data_marker],
+                            loc='upper left', bbox_to_anchor=(0.01, 0.99), ncol=3, fontsize=10)
+
             self.fig.suptitle(self.plot_title_var.get(), fontsize=16, y=0.98)
             self.canvas.draw()
         except Exception as e:
@@ -1000,9 +1123,6 @@ class SuSiAnalysisTool:
     def generate_plots(self):
         self.generate_plots_dispatch()
 
-    ##########################################
-    # Main: Load Multiple Files
-    ##########################################
     def load_multiple_files(self):
         file_paths = filedialog.askopenfilenames(filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")])
         if not file_paths:
@@ -1026,7 +1146,7 @@ class SuSiAnalysisTool:
                         if len(parts) > 1:
                             active_area = parts[1].strip()
                         break
-                start_idx = len(parameters) + 2
+                start_idx = len(parameters) + 1
                 try:
                     perf = pd.read_csv(file_path, sep="\t", skiprows=start_idx, encoding="latin1",
                                        engine="python", error_bad_lines=False)
