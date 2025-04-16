@@ -397,7 +397,7 @@ class SuSiAnalysisTool:
             self.plot_title_var.set(base_name)
             start_idx = len(parameters) + 1
             full_data = pd.read_csv(file_path, sep="\t", skiprows=start_idx, encoding="latin1",
-                                    engine="python", error_bad_lines=False)
+                                    engine="python", on_bad_lines='skip')
             data_numeric = full_data.apply(pd.to_numeric, errors="coerce").dropna(axis=1, how="all")
             data_numeric = data_numeric.drop(data_numeric.columns[0], axis=1)
             if data_numeric.shape[1] % 2 != 0:
@@ -411,7 +411,7 @@ class SuSiAnalysisTool:
             if iv_start is not None:
                 try:
                     iv_data = pd.read_csv(file_path, sep="\t", skiprows=iv_start+2, encoding="latin1",
-                                          engine="python", error_bad_lines=False)
+                                          engine="python", on_bad_lines='skip')
                 except pd.errors.EmptyDataError:
                     iv_data = None
                 if iv_data is not None and not iv_data.empty:
@@ -453,7 +453,7 @@ class SuSiAnalysisTool:
                 start_idx = len(parameters) + 2
                 try:
                     perf = pd.read_csv(file_path, sep="\t", skiprows=start_idx, encoding="latin1",
-                                       engine="python", error_bad_lines=False)
+                                       engine="python", on_bad_lines='skip')
                 except pd.errors.EmptyDataError:
                     continue
                 if perf.empty or len(perf.columns) == 0:
@@ -469,7 +469,7 @@ class SuSiAnalysisTool:
                 if iv_start is not None:
                     try:
                         iv = pd.read_csv(file_path, sep="\t", skiprows=iv_start+2, encoding="latin1",
-                                         engine="python", error_bad_lines=False)
+                                         engine="python", on_bad_lines='skip')
                     except pd.errors.EmptyDataError:
                         iv = None
                     if iv is not None and not iv.empty:
@@ -1149,7 +1149,7 @@ class SuSiAnalysisTool:
                 start_idx = len(parameters) + 1
                 try:
                     perf = pd.read_csv(file_path, sep="\t", skiprows=start_idx, encoding="latin1",
-                                       engine="python", error_bad_lines=False)
+                                       engine="python", on_bad_lines='skip')
                 except pd.errors.EmptyDataError:
                     continue
                 if perf.empty or len(perf.columns) == 0:
@@ -1165,7 +1165,7 @@ class SuSiAnalysisTool:
                 if iv_start is not None:
                     try:
                         iv = pd.read_csv(file_path, sep="\t", skiprows=iv_start+2, encoding="latin1",
-                                         engine="python", error_bad_lines=False)
+                                         engine="python", on_bad_lines='skip')
                     except pd.errors.EmptyDataError:
                         iv = None
                     if iv is not None and not iv.empty:
