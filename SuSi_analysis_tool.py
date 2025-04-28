@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """
 SuSi Analysis Tool
 ------------------
@@ -167,9 +165,6 @@ class SuSiAnalysisTool:
         self.plot_canvas.bind_all("<MouseWheel>", self.on_mousewheel)
         self.params_canvas.bind_all("<MouseWheel>", self.on_mousewheel)
 
-    ##########################################
-    # Mouse Wheel Handler
-    ##########################################
     def on_mousewheel(self, event):
         delta = event.delta if hasattr(event, 'delta') else (120 if event.num == 4 else -120)
         if event.widget in (self.plot_canvas, self.plot_inner_frame):
@@ -177,9 +172,6 @@ class SuSiAnalysisTool:
         elif event.widget in (self.params_canvas, self.params_inner_frame):
             self.params_canvas.yview_scroll(-1 * int(delta / 120), "units")
 
-    ##########################################
-    # Customization Window (Unchanged)
-    ##########################################
     def open_customization_window(self):
         win = tk.Toplevel(self.root)
         win.title("Customize Plot")
@@ -312,68 +304,78 @@ class SuSiAnalysisTool:
         tk.Button(button_frame, text="Apply", command=apply_custom, width=10).pack()
         win.focus_force()
 
-    ##########################################
-    # Filter Settings Window (with Voltage Filter)
-    ##########################################
-    def open_filter_window(self):
-        win = tk.Toplevel(self.root)
-        win.title("Filter Settings")
-        def create_filter_row(param, default_range, row):
-            tk.Label(win, text=f"{param} range (min,max):").grid(row=row, column=0, sticky="w", padx=5, pady=5)
-            entry = tk.Entry(win, width=20)
-            entry.insert(0, f"{default_range[0]},{default_range[1]}")
-            entry.grid(row=row, column=1, padx=5, pady=5)
-            return entry
-        entry_jsc = create_filter_row("Jsc", self.filter_options["Jsc"], 0)
-        entry_voc = create_filter_row("Voc", self.filter_options["Voc"], 1)
-        entry_eff = create_filter_row("Efficiency", self.filter_options["Efficiency"], 2)
-        entry_ff = create_filter_row("Fill Factor", self.filter_options["Fill Factor"], 3)
-        entry_volt = create_filter_row("Voltage", self.filter_options["Voltage"], 4)
-        def apply_filters():
-            try:
-                for param, entry in zip(["Jsc", "Voc", "Efficiency", "Fill Factor", "Voltage"],
-                                        [entry_jsc, entry_voc, entry_eff, entry_ff, entry_volt]):
-                    parts = entry.get().split(',')
-                    if len(parts) != 2:
-                        raise ValueError(f"Invalid range for {param}")
-                    self.filter_options[param] = (float(parts[0]), float(parts[1]))
-                messagebox.showinfo("Success", "Filter settings updated.")
-                win.destroy()
-            except Exception as ex:
-                messagebox.showerror("Error", f"Invalid input: {ex}")
-        tk.Button(win, text="Apply Filters", command=apply_filters).grid(row=5, column=0, columnspan=2, pady=10)
-
     def open_group_window(self):
         if not self.multi_data:
             messagebox.showinfo("Info", "Load multiple files first.")
             return
         win = tk.Toplevel(self.root)
-        win.title("Group Files")
-        win.geometry("400x300")
-        tk.Label(win, text="Assign group names to each file (files with the same group name will be plotted together):", wraplength=380).pack(padx=10, pady=10)
+        win.title("Group and Order Files")
+        win.geometry("550x400")
+
+        tk.Label(win, text="Rename and order files into groups (same name → combined):", wraplength=520) \
+            .pack(padx=10, pady=10)
         frame = tk.Frame(win)
         frame.pack(padx=10, pady=10, fill="both", expand=True)
-        self.group_vars = []
-        for idx, d in enumerate(self.multi_data):
-            var = tk.StringVar(value=d["filename"])
-            self.group_vars.append(var)
-            tk.Label(frame, text=f"File {idx + 1} ({d['filename']}):").grid(row=idx, column=0, sticky="w", padx=5, pady=5)
-            tk.Entry(frame, textvariable=var, width=25).grid(row=idx, column=1, padx=5, pady=5)
+
+        name_vars = []
+        order_vars = []
+        for idx, entry in enumerate(self.multi_data):
+            row = tk.Frame(frame)
+            row.grid(row=idx, column=0, sticky="w", pady=2)
+
+            # Show original filename
+            tk.Label(row, text=f"File {idx + 1}: {entry['filename']}").pack(side="left")
+
+            # Editable group name
+            nv = tk.StringVar(value=entry.get('group', entry['filename']))
+            name_vars.append(nv)
+            tk.Entry(row, textvariable=nv, width=20).pack(side="left", padx=5)
+
+            # Spinbox for explicit ordering
+            ov = tk.IntVar(value=idx + 1)
+            order_vars.append(ov)
+            tk.Spinbox(row, from_=1, to=len(self.multi_data), textvariable=ov, width=4).pack(side="left")
+
         def apply_grouping():
-            self.group_mapping = {}
-            for idx, var in enumerate(self.group_vars):
-                group = var.get().strip()
-                if group not in self.group_mapping:
-                    self.group_mapping[group] = []
-                self.group_mapping[group].append(idx)
-            messagebox.showinfo("Success", "Grouping updated.")
+            # 1) Collect and sort by order
+            items = [(order_vars[i].get(), name_vars[i].get().strip(), i)
+                     for i in range(len(self.multi_data))]
+            items.sort(key=lambda x: x[0])
+
+            # 2) Group identical names (in sorted order)
+            from collections import OrderedDict
+            grouped = OrderedDict()
+            for _, name, orig_idx in items:
+                grouped.setdefault(name, []).append(orig_idx)
+
+            # 3) Build new multi_data with combined DataFrames
+            new_multi = []
+            for name, indices in grouped.items():
+                # Combine performance
+                perf_list = [self.multi_data[i]['performance'] for i in indices]
+                combined_perf = pd.concat(perf_list, axis=1)
+                # Combine IV if exists
+                iv_list = [self.multi_data[i].get('iv') for i in indices if self.multi_data[i].get('iv') is not None]
+                combined_iv = pd.concat(iv_list, axis=1) if iv_list else None
+                if combined_iv is not None and combined_iv.shape[1] == 1:
+                    combined_iv = pd.concat([combined_iv, combined_iv], axis=1)
+                new_multi.append({
+                    'filename': name,
+                    'performance': combined_perf,
+                    'iv': combined_iv
+                })
+
+            self.multi_data = new_multi
+            # Sync the custom labels string
+            self.custom_labels_var.set(",".join([d['filename'] for d in new_multi]))
+
+            messagebox.showinfo("Success", "Grouping and ordering applied.")
             win.destroy()
+            self.generate_plots()
+
         tk.Button(win, text="Apply Grouping", command=apply_grouping).pack(pady=10)
         win.focus_force()
 
-    ##########################################
-    # File Loading Functions
-    ##########################################
     def load_file(self):
         file_path = filedialog.askopenfilename(filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")])
         if not file_path:
@@ -502,9 +504,6 @@ class SuSiAnalysisTool:
             self.params_text.config(state="disabled")
             print("Multiple files loaded successfully!")
 
-    ##########################################
-    # Plot Generation Functions
-    ##########################################
     def generate_plots(self):
         if self.multi_data:
             self.generate_plots_multiple()
@@ -516,6 +515,35 @@ class SuSiAnalysisTool:
         if not self.plot_frame_container.winfo_ismapped():
             self.plot_frame_container.pack(fill="both", expand=True, padx=10, pady=5)
         self.canvas.draw()
+
+    def open_filter_window(self):
+        win = tk.Toplevel(self.root)
+        win.title("Filter Settings")
+        def create_filter_row(param, default_range, row):
+            tk.Label(win, text=f"{param} range (min,max):").grid(row=row, column=0, sticky="w", padx=5, pady=5)
+            entry = tk.Entry(win, width=20)
+            entry.insert(0, f"{default_range[0]},{default_range[1]}")
+            entry.grid(row=row, column=1, padx=5, pady=5)
+            return entry
+        entry_jsc = create_filter_row("Jsc", self.filter_options["Jsc"], 0)
+        entry_voc = create_filter_row("Voc", self.filter_options["Voc"], 1)
+        entry_eff = create_filter_row("Efficiency", self.filter_options["Efficiency"], 2)
+        entry_ff = create_filter_row("Fill Factor", self.filter_options["Fill Factor"], 3)
+        entry_volt = create_filter_row("Voltage", self.filter_options["Voltage"], 4)
+        def apply_filters():
+            try:
+                for param, entry in zip(["Jsc", "Voc", "Efficiency", "Fill Factor", "Voltage"],
+                                        [entry_jsc, entry_voc, entry_eff, entry_ff, entry_volt]):
+                    parts = entry.get().split(',')
+                    if len(parts) != 2:
+                        raise ValueError(f"Invalid range for {param}")
+                    self.filter_options[param] = (float(parts[0]), float(parts[1]))
+                messagebox.showinfo("Success", "Filter settings updated.")
+                win.destroy()
+                self.generate_plots()
+            except Exception as ex:
+                messagebox.showerror("Error", f"Invalid input: {ex}")
+        tk.Button(win, text="Apply Filters", command=apply_filters).grid(row=5, column=0, columnspan=2, pady=10)
 
     def generate_plots_single(self):
         # Single-file mode works as before.
@@ -621,31 +649,79 @@ class SuSiAnalysisTool:
             self.ax_eff.set_ylabel(self.plot_options["y_axis_labels"].get("Efficiency"))
             self.ax_eff.set_xticks(major_ticks)
             self.ax_eff.set_xticklabels(pixel_labels, rotation=45, ha='right')
+
+            # Create proxy artists for the boxplot legend
+            box_fwd_patch = mpatches.Patch(color=self.plot_options["forward_color"].get("Efficiency", "blue"),
+                                           fill=False, label='Fwd')
+            box_rev_patch = mpatches.Patch(color=self.plot_options["reverse_color"].get("Efficiency", "red"),
+                                           fill=False, label='Rev')
+            orange_line = mlines.Line2D([], [], color='orange', marker='_', linestyle='None',
+                                        markersize=10, label='Median')
+
             for i in range(len(eff_fwd)):
-                # For each file, boxplot the forward data:
-                self.ax_eff.boxplot([eff_fwd[i]], positions=[x_positions_fwd[i]], widths=0.1,
-                                    patch_artist=True,
-                                    boxprops=dict(facecolor='none', color=self.plot_options["forward_color"].get("Efficiency", "blue")),
-                                    medianprops=dict(color='orange'))
-                # And boxplot the reverse data:
-                self.ax_eff.boxplot([eff_rev[i]], positions=[x_positions_rev[i]], widths=0.1,
-                                    patch_artist=True,
-                                    boxprops=dict(facecolor='none', color=self.plot_options["reverse_color"].get("Efficiency", "red")),
-                                    medianprops=dict(color='orange'))
+                # Create arrays with non-NaN values only for boxplots
+                eff_fwd_filtered = eff_fwd[i:i + 1]
+                eff_fwd_filtered = eff_fwd_filtered[~np.isnan(eff_fwd_filtered)]
+                eff_rev_filtered = eff_rev[i:i + 1]
+                eff_rev_filtered = eff_rev_filtered[~np.isnan(eff_rev_filtered)]
+
+                # Only create boxplot if there are valid values
+                if len(eff_fwd_filtered) > 0:
+                    self.ax_eff.boxplot([eff_fwd_filtered], positions=[x_positions_fwd[i]], widths=0.1,
+                                        patch_artist=True,
+                                        boxprops=dict(facecolor='none',
+                                                      color=self.plot_options["forward_color"].get("Efficiency",
+                                                                                                   "blue")),
+                                        medianprops=dict(color='orange'))
+
+                if len(eff_rev_filtered) > 0:
+                    self.ax_eff.boxplot([eff_rev_filtered], positions=[x_positions_rev[i]], widths=0.1,
+                                        patch_artist=True,
+                                        boxprops=dict(facecolor='none',
+                                                      color=self.plot_options["reverse_color"].get("Efficiency",
+                                                                                                   "red")),
+                                        medianprops=dict(color='orange'))
+
+            # Add legend for the boxplots
+            self.ax_eff.legend(handles=[box_fwd_patch, box_rev_patch, orange_line], loc='upper left')
             self.ax_eff.grid(False)
 
             self.ax_ff.set_ylabel(self.plot_options["y_axis_labels"].get("Fill Factor"))
             self.ax_ff.set_xticks(major_ticks)
             self.ax_ff.set_xticklabels(pixel_labels, rotation=45, ha='right')
+
+            # Create proxy artists for the boxplot legend (Fill Factor)
+            box_fwd_patch_ff = mpatches.Patch(color=self.plot_options["forward_color"].get("Fill Factor", "blue"),
+                                              fill=False, label='Fwd')
+            box_rev_patch_ff = mpatches.Patch(color=self.plot_options["reverse_color"].get("Fill Factor", "red"),
+                                              fill=False, label='Rev')
+
             for i in range(len(ff_fwd)):
-                self.ax_ff.boxplot([ff_fwd[i]], positions=[x_positions_fwd[i]], widths=0.1,
-                                   patch_artist=True,
-                                   boxprops=dict(facecolor='none', color=self.plot_options["forward_color"].get("Fill Factor", "blue")),
-                                   medianprops=dict(color='orange'))
-                self.ax_ff.boxplot([ff_rev[i]], positions=[x_positions_rev[i]], widths=0.1,
-                                   patch_artist=True,
-                                   boxprops=dict(facecolor='none', color=self.plot_options["reverse_color"].get("Fill Factor", "red")),
-                                   medianprops=dict(color='orange'))
+                # Create arrays with non-NaN values only for boxplots
+                ff_fwd_filtered = ff_fwd[i:i + 1]
+                ff_fwd_filtered = ff_fwd_filtered[~np.isnan(ff_fwd_filtered)]
+                ff_rev_filtered = ff_rev[i:i + 1]
+                ff_rev_filtered = ff_rev_filtered[~np.isnan(ff_rev_filtered)]
+
+                # Only create boxplot if there are valid values
+                if len(ff_fwd_filtered) > 0:
+                    self.ax_ff.boxplot([ff_fwd_filtered], positions=[x_positions_fwd[i]], widths=0.1,
+                                       patch_artist=True,
+                                       boxprops=dict(facecolor='none',
+                                                     color=self.plot_options["forward_color"].get("Fill Factor",
+                                                                                                  "blue")),
+                                       medianprops=dict(color='orange'))
+
+                if len(ff_rev_filtered) > 0:
+                    self.ax_ff.boxplot([ff_rev_filtered], positions=[x_positions_rev[i]], widths=0.1,
+                                       patch_artist=True,
+                                       boxprops=dict(facecolor='none',
+                                                     color=self.plot_options["reverse_color"].get("Fill Factor",
+                                                                                                  "red")),
+                                       medianprops=dict(color='orange'))
+
+            # Add legend for Fill Factor boxplots
+            self.ax_ff.legend(handles=[box_fwd_patch_ff, box_rev_patch_ff, orange_line], loc='upper left')
             self.ax_ff.grid(True)
         else:
             x_positions = np.arange(1, num_pixels + 1)
@@ -668,7 +744,7 @@ class SuSiAnalysisTool:
             self.ax_voc.scatter(x_positions, voc_rev, marker=self.plot_options["reverse_marker"],
                                 s=ms * 10, color=self.plot_options["reverse_color"]["Voc"], label="Rev")
             self.ax_voc.legend()
-            self.ax_voc.grid(True)
+            self.ax_voc.grid(False)
 
             self.ax_eff.set_ylabel(self.plot_options["y_axis_labels"]["Efficiency"])
             self.ax_eff.set_xticks(x_positions)
@@ -688,7 +764,7 @@ class SuSiAnalysisTool:
             self.ax_ff.scatter(x_positions, ff_rev, marker=self.plot_options["reverse_marker"],
                                s=ms * 10, color=self.plot_options["reverse_color"]["Fill Factor"], label="Rev")
             self.ax_ff.legend()
-            self.ax_ff.grid(True)
+            self.ax_ff.grid(False)
 
         # I-V curves (Single File mode)
         self.ax_iv.clear()
@@ -699,7 +775,8 @@ class SuSiAnalysisTool:
             mask = (voltage >= vlow) & (voltage <= vhigh)
             voltage = voltage[mask]
             num_iv_cols = iv.shape[1]
-            colors = ['blue', 'red', 'green', 'orange', 'purple', 'cyan', 'magenta', 'brown', 'pink', 'gray', 'olive', 'teal']
+            colors = ['blue', 'red', 'green', 'orange', 'purple', 'cyan', 'magenta', 'brown', 'pink', 'gray', 'olive',
+                      'teal']
             if num_iv_cols == 2:
                 y_data = iv.iloc[:, 1][mask]
                 self.ax_iv.plot(voltage, y_data,
@@ -708,33 +785,35 @@ class SuSiAnalysisTool:
                                 markersize=4, color=colors[0],
                                 label="Pixel 1 (Fwd)")
             elif num_iv_cols >= 3:
-                num_iv_curves = (num_iv_cols - 1) // 2
+                # Calculate the actual number of curves to plot
+                num_iv_curves = (num_iv_cols - 1)
                 if num_iv_curves < 1:
                     num_iv_curves = 1
-                for i in range(num_iv_curves):
-                    col_fwd = 2 * i + 1
-                    col_rev = col_fwd + 1
-                    if col_fwd < num_iv_cols:
-                        y_fwd = iv.iloc[:, col_fwd][mask]
-                        self.ax_iv.plot(voltage, y_fwd,
+
+                for i in range(1, num_iv_cols):
+                    if i % 2 == 1:  # Forward curve
+                        pixel_num = (i // 2) + 1
+                        y_data = iv.iloc[:, i][mask]
+                        self.ax_iv.plot(voltage, y_data,
                                         linestyle=self.plot_options["iv_line_style"]["Fwd"],
                                         marker=self.plot_options["iv_marker"]["Fwd"],
-                                        markersize=4, color=colors[i % len(colors)],
-                                        label=f"Pixel {i+1} (Fwd)")
-                    if col_rev < num_iv_cols:
-                        y_rev = iv.iloc[:, col_rev][mask]
-                        self.ax_iv.plot(voltage, y_rev,
+                                        markersize=4, color=colors[(pixel_num - 1) % len(colors)],
+                                        label=f"Pixel {pixel_num} (Fwd)")
+                    else:  # Reverse curve
+                        pixel_num = (i // 2)
+                        y_data = iv.iloc[:, i][mask]
+                        self.ax_iv.plot(voltage, y_data,
                                         linestyle=self.plot_options["iv_line_style"]["Rev"],
                                         marker=self.plot_options["iv_marker"]["Rev"],
-                                        markersize=4, color=colors[i % len(colors)],
-                                        label=f"Pixel {i+1} (Rev)")
+                                        markersize=4, color=colors[(pixel_num - 1) % len(colors)],
+                                        label=f"Pixel {pixel_num} (Rev)")
             self.ax_iv.set_xlabel(self.plot_options["x_axis_labels"].get("IV", "Voltage [V]"))
             self.ax_iv.set_ylabel(self.plot_options["y_axis_labels"].get("IV", "J [mA/cm²]"))
             self.ax_iv.legend(loc='upper left')
-            self.ax_iv.grid(True)
+            self.ax_iv.grid(False)
         else:
             self.ax_iv.set_title("No I-V Data")
-        self.fig.suptitle(self.plot_title_var.get(), fontsize=16, y=0.98)
+        self.fig.suptitle("Comparison Plot", fontsize=16, y=0.98)
         self.canvas.draw()
 
     def generate_plots_multiple(self):
@@ -824,6 +903,7 @@ class SuSiAnalysisTool:
                 values[(values < low) | (values > high)] = np.nan
                 return values
 
+            # Apply filters to all data arrays
             jsc_data = [apply_filter(arr, "Jsc") for arr in jsc_data]
             voc_data = [apply_filter(arr, "Voc") for arr in voc_data]
             ff_data = [apply_filter(arr, "Fill Factor") for arr in ff_data]
@@ -842,15 +922,6 @@ class SuSiAnalysisTool:
                 x_positions_fwd = np.array([i + 1 for i in range(nfiles)])
                 x_positions_rev = x_positions_fwd + offset
 
-                # Build tick positions and labels for Efficiency and Fill Factor only:
-                tick_positions = []
-                tick_labels = []
-                for i in range(nfiles):
-                    tick_positions.append(x_positions_fwd[i])
-                    tick_labels.append(f"{labels[i]} Fwd")
-                    tick_positions.append(x_positions_rev[i])
-                    tick_labels.append(f"{labels[i]} Rev")
-
                 # J_sc Plot: annotate medians and hide x tick labels.
                 for i, data in enumerate(jsc_data):
                     if data is None or len(data) == 0:
@@ -859,31 +930,43 @@ class SuSiAnalysisTool:
                         data = data[:-1]
                     fwd = data[::2]
                     rev = data[1::2]
-                    self.ax_jsc.boxplot(fwd, positions=[x_positions_fwd[i]], widths=0.1,
-                                        patch_artist=True,
-                                        boxprops=dict(facecolor='none',
-                                                      color=self.plot_options["forward_color"].get("Jsc", "blue")),
-                                        medianprops=dict(color='orange'))
-                    self.ax_jsc.boxplot(rev, positions=[x_positions_rev[i]], widths=0.1,
-                                        patch_artist=True,
-                                        boxprops=dict(facecolor='none',
-                                                      color=self.plot_options["reverse_color"].get("Jsc", "red")),
-                                        medianprops=dict(color='orange'))
-                    self.ax_jsc.scatter(np.full(len(fwd), x_positions_fwd[i]), fwd,
-                                        s=20, color='darkblue', alpha=0.6)
-                    self.ax_jsc.scatter(np.full(len(rev), x_positions_rev[i]), rev,
-                                        s=20, color='darkred', alpha=0.6)
-                    med_fwd = np.nanmedian(fwd)
-                    med_rev = np.nanmedian(rev)
-                    # Shift median annotation slightly to the right (fwd) and right (rev) for clarity.
-                    self.ax_jsc.text(x_positions_fwd[i] + 0.05, med_fwd, f"{med_fwd:.2f}", fontsize=8,
-                                     color='black', ha="left", va="center")
-                    self.ax_jsc.text(x_positions_rev[i] + 0.05, med_rev, f"{med_rev:.2f}", fontsize=8,
-                                     color='black', ha="left", va="center")
+
+                    # Filter NaN values for boxplots
+                    fwd_filtered = fwd[~np.isnan(fwd)]
+                    rev_filtered = rev[~np.isnan(rev)]
+
+                    # Get colors for data points (same as what boxes previously had)
+                    fwd_color = self.plot_options["forward_color"].get("Jsc", "blue")
+                    rev_color = self.plot_options["reverse_color"].get("Jsc", "red")
+
+                    if len(fwd_filtered) > 0:
+                        self.ax_jsc.boxplot([fwd_filtered], positions=[x_positions_fwd[i]], widths=0.1,
+                                            patch_artist=True,
+                                            boxprops=dict(facecolor='none', color='black'),
+                                            medianprops=dict(color='orange'))
+                        self.ax_jsc.scatter(np.full(len(fwd_filtered), x_positions_fwd[i]), fwd_filtered,
+                                            s=20, color=fwd_color, alpha=0.6)
+                        med_fwd = np.nanmedian(fwd_filtered)  # Use filtered data for median
+                        if not np.isnan(med_fwd) and len(fwd_filtered) > 0:
+                            self.ax_jsc.text(x_positions_fwd[i] + 0.12, med_fwd, f"{med_fwd:.2f}", fontsize=10,
+                                             color='orange', ha="left", va="center")
+
+                    if len(rev_filtered) > 0:
+                        self.ax_jsc.boxplot([rev_filtered], positions=[x_positions_rev[i]], widths=0.1,
+                                            patch_artist=True,
+                                            boxprops=dict(facecolor='none', color='black'),
+                                            medianprops=dict(color='orange'))
+                        self.ax_jsc.scatter(np.full(len(rev_filtered), x_positions_rev[i]), rev_filtered,
+                                            s=20, color=rev_color, alpha=0.6)
+                        med_rev = np.nanmedian(rev_filtered)  # Use filtered data for median
+                        if not np.isnan(med_rev) and len(rev_filtered) > 0:
+                            self.ax_jsc.text(x_positions_rev[i] + 0.12, med_rev, f"{med_rev:.2f}", fontsize=10,
+                                             color='orange', ha="left", va="center")
+
                 self.ax_jsc.set_xticks(x_positions_fwd)  # Ticks present but no labels
                 self.ax_jsc.set_xticklabels([])
                 self.ax_jsc.set_ylabel(self.plot_options["y_axis_labels"].get("Jsc", r"$J_{sc}$ [mA/cm²]"))
-                self.ax_jsc.grid(True)
+                self.ax_jsc.grid(False)  # Turn off grid
 
                 # V_oc Plot: annotate medians and hide x tick labels.
                 for i, data in enumerate(voc_data):
@@ -893,30 +976,43 @@ class SuSiAnalysisTool:
                         data = data[:-1]
                     fwd = data[::2]
                     rev = data[1::2]
-                    self.ax_voc.boxplot(fwd, positions=[x_positions_fwd[i]], widths=0.1,
-                                        patch_artist=True,
-                                        boxprops=dict(facecolor='none',
-                                                      color=self.plot_options["forward_color"].get("Voc", "blue")),
-                                        medianprops=dict(color='orange'))
-                    self.ax_voc.boxplot(rev, positions=[x_positions_rev[i]], widths=0.1,
-                                        patch_artist=True,
-                                        boxprops=dict(facecolor='none',
-                                                      color=self.plot_options["reverse_color"].get("Voc", "red")),
-                                        medianprops=dict(color='orange'))
-                    self.ax_voc.scatter(np.full(len(fwd), x_positions_fwd[i]), fwd,
-                                        s=20, color='darkblue', alpha=0.6)
-                    self.ax_voc.scatter(np.full(len(rev), x_positions_rev[i]), rev,
-                                        s=20, color='darkred', alpha=0.6)
-                    med_fwd = np.nanmedian(fwd)
-                    med_rev = np.nanmedian(rev)
-                    self.ax_voc.text(x_positions_fwd[i] + 0.05, med_fwd, f"{med_fwd:.2f}", fontsize=8,
-                                     color='black', ha="left", va="center")
-                    self.ax_voc.text(x_positions_rev[i] + 0.05, med_rev, f"{med_rev:.2f}", fontsize=8,
-                                     color='black', ha="left", va="center")
+
+                    # Filter NaN values for boxplots
+                    fwd_filtered = fwd[~np.isnan(fwd)]
+                    rev_filtered = rev[~np.isnan(rev)]
+
+                    # Get colors for data points (same as what boxes previously had)
+                    fwd_color = self.plot_options["forward_color"].get("Voc", "blue")
+                    rev_color = self.plot_options["reverse_color"].get("Voc", "red")
+
+                    if len(fwd_filtered) > 0:
+                        self.ax_voc.boxplot([fwd_filtered], positions=[x_positions_fwd[i]], widths=0.1,
+                                            patch_artist=True,
+                                            boxprops=dict(facecolor='none', color='black'),
+                                            medianprops=dict(color='orange'))
+                        self.ax_voc.scatter(np.full(len(fwd_filtered), x_positions_fwd[i]), fwd_filtered,
+                                            s=20, color=fwd_color, alpha=0.6)
+                        med_fwd = np.nanmedian(fwd_filtered)  # Use filtered data for median
+                        if not np.isnan(med_fwd) and len(fwd_filtered) > 0:
+                            self.ax_voc.text(x_positions_fwd[i] + 0.12, med_fwd, f"{med_fwd:.2f}", fontsize=10,
+                                             color='orange', ha="left", va="center")
+
+                    if len(rev_filtered) > 0:
+                        self.ax_voc.boxplot([rev_filtered], positions=[x_positions_rev[i]], widths=0.1,
+                                            patch_artist=True,
+                                            boxprops=dict(facecolor='none', color='black'),
+                                            medianprops=dict(color='orange'))
+                        self.ax_voc.scatter(np.full(len(rev_filtered), x_positions_rev[i]), rev_filtered,
+                                            s=20, color=rev_color, alpha=0.6)
+                        med_rev = np.nanmedian(rev_filtered)  # Use filtered data for median
+                        if not np.isnan(med_rev) and len(rev_filtered) > 0:
+                            self.ax_voc.text(x_positions_rev[i] + 0.12, med_rev, f"{med_rev:.2f}", fontsize=10,
+                                             color='orange', ha="left", va="center")
+
                 self.ax_voc.set_xticks(x_positions_fwd)
                 self.ax_voc.set_xticklabels([])
                 self.ax_voc.set_ylabel(self.plot_options["y_axis_labels"].get("Voc", r"$V_{oc}$ [V]"))
-                self.ax_voc.grid(True)
+                self.ax_voc.grid(False)  # Turn off grid
 
                 # Efficiency Plot: annotate medians and show x tick labels.
                 for i, data in enumerate(eff_data):
@@ -926,32 +1022,43 @@ class SuSiAnalysisTool:
                         data = data[:-1]
                     fwd = data[::2]
                     rev = data[1::2]
-                    self.ax_eff.boxplot(fwd, positions=[x_positions_fwd[i]], widths=0.1,
-                                        patch_artist=True,
-                                        boxprops=dict(facecolor='none',
-                                                      color=self.plot_options["forward_color"].get("Efficiency",
-                                                                                                   "blue")),
-                                        medianprops=dict(color='orange'))
-                    self.ax_eff.boxplot(rev, positions=[x_positions_rev[i]], widths=0.1,
-                                        patch_artist=True,
-                                        boxprops=dict(facecolor='none',
-                                                      color=self.plot_options["reverse_color"].get("Efficiency",
-                                                                                                   "red")),
-                                        medianprops=dict(color='orange'))
-                    self.ax_eff.scatter(np.full(len(fwd), x_positions_fwd[i]), fwd,
-                                        s=20, color='darkblue', alpha=0.6)
-                    self.ax_eff.scatter(np.full(len(rev), x_positions_rev[i]), rev,
-                                        s=20, color='darkred', alpha=0.6)
-                    med_fwd = np.nanmedian(fwd)
-                    med_rev = np.nanmedian(rev)
-                    self.ax_eff.text(x_positions_fwd[i] + 0.05, med_fwd, f"{med_fwd:.2f}", fontsize=8,
-                                     color='black', ha="left", va="center")
-                    self.ax_eff.text(x_positions_rev[i] + 0.05, med_rev, f"{med_rev:.2f}", fontsize=8,
-                                     color='black', ha="left", va="center")
-                self.ax_eff.set_xticks(tick_positions)
-                self.ax_eff.set_xticklabels(tick_labels, rotation=45, ha='right')
+
+                    # Filter NaN values for boxplots
+                    fwd_filtered = fwd[~np.isnan(fwd)]
+                    rev_filtered = rev[~np.isnan(rev)]
+
+                    # Get colors for data points (same as what boxes previously had)
+                    fwd_color = self.plot_options["forward_color"].get("Efficiency", "blue")
+                    rev_color = self.plot_options["reverse_color"].get("Efficiency", "red")
+
+                    if len(fwd_filtered) > 0:
+                        self.ax_eff.boxplot([fwd_filtered], positions=[x_positions_fwd[i]], widths=0.1,
+                                            patch_artist=True,
+                                            boxprops=dict(facecolor='none', color='black'),
+                                            medianprops=dict(color='orange'))
+                        self.ax_eff.scatter(np.full(len(fwd_filtered), x_positions_fwd[i]), fwd_filtered,
+                                            s=20, color=fwd_color, alpha=0.6)
+                        med_fwd = np.nanmedian(fwd_filtered)  # Use filtered data for median
+                        if not np.isnan(med_fwd) and len(fwd_filtered) > 0:
+                            self.ax_eff.text(x_positions_fwd[i] + 0.12, med_fwd, f"{med_fwd:.2f}", fontsize=10,
+                                             color='orange', ha="left", va="center")
+
+                    if len(rev_filtered) > 0:
+                        self.ax_eff.boxplot([rev_filtered], positions=[x_positions_rev[i]], widths=0.1,
+                                            patch_artist=True,
+                                            boxprops=dict(facecolor='none', color='black'),
+                                            medianprops=dict(color='orange'))
+                        self.ax_eff.scatter(np.full(len(rev_filtered), x_positions_rev[i]), rev_filtered,
+                                            s=20, color=rev_color, alpha=0.6)
+                        med_rev = np.nanmedian(rev_filtered)  # Use filtered data for median
+                        if not np.isnan(med_rev) and len(rev_filtered) > 0:
+                            self.ax_eff.text(x_positions_rev[i] + 0.12, med_rev, f"{med_rev:.2f}", fontsize=10,
+                                             color='orange', ha="left", va="center")
+
+                self.ax_eff.set_xticks(np.array([x_positions_fwd[i] + offset / 2 for i in range(len(x_positions_fwd))]))
+                self.ax_eff.set_xticklabels(labels, rotation=45, ha='right')
                 self.ax_eff.set_ylabel(self.plot_options["y_axis_labels"].get("Efficiency", "Efficiency [%]"))
-                self.ax_eff.grid(True)
+                self.ax_eff.grid(False)  # Already set to False in original
 
                 # Fill Factor Plot: annotate medians and show x tick labels.
                 for i, data in enumerate(ff_data):
@@ -961,127 +1068,185 @@ class SuSiAnalysisTool:
                         data = data[:-1]
                     fwd = data[::2]
                     rev = data[1::2]
-                    self.ax_ff.boxplot(fwd, positions=[x_positions_fwd[i]], widths=0.1,
-                                       patch_artist=True,
-                                       boxprops=dict(facecolor='none',
-                                                     color=self.plot_options["forward_color"].get("Fill Factor",
-                                                                                                  "blue")),
-                                       medianprops=dict(color='orange'))
-                    self.ax_ff.boxplot(rev, positions=[x_positions_rev[i]], widths=0.1,
-                                       patch_artist=True,
-                                       boxprops=dict(facecolor='none',
-                                                     color=self.plot_options["reverse_color"].get("Fill Factor",
-                                                                                                  "red")),
-                                       medianprops=dict(color='orange'))
-                    self.ax_ff.scatter(np.full(len(fwd), x_positions_fwd[i]), fwd,
-                                       s=20, color='darkblue', alpha=0.6)
-                    self.ax_ff.scatter(np.full(len(rev), x_positions_rev[i]), rev,
-                                       s=20, color='darkred', alpha=0.6)
-                    med_fwd = np.nanmedian(fwd)
-                    med_rev = np.nanmedian(rev)
-                    self.ax_ff.text(x_positions_fwd[i] + 0.05, med_fwd, f"{med_fwd:.2f}", fontsize=8,
-                                    color='black', ha="left", va="center")
-                    self.ax_ff.text(x_positions_rev[i] + 0.05, med_rev, f"{med_rev:.2f}", fontsize=8,
-                                    color='black', ha="left", va="center")
-                self.ax_ff.set_xticks(tick_positions)
-                self.ax_ff.set_xticklabels(tick_labels, rotation=45, ha='right')
-                self.ax_ff.set_ylabel(self.plot_options["y_axis_labels"].get("Fill Factor", "Fill Factor [%]"))
-                self.ax_ff.grid(True)
-            else:
-                # Non-separate mode: one x tick per file; median annotations always shown.
-                x_positions = np.arange(1, len(self.multi_data) + 1)
-                boxprops = dict(facecolor='none', color='black')
-                medianprops = dict(color='orange', linewidth=2)
-                whiskerprops = dict(color='black', linestyle='--')
-                flierprops = dict(marker='o', markerfacecolor='black', markersize=4)
-                self.ax_jsc.boxplot(jsc_data, positions=x_positions, patch_artist=True,
-                                    boxprops=boxprops, medianprops=medianprops,
-                                    whiskerprops=whiskerprops, flierprops=flierprops)
-                for i, data in enumerate(jsc_data):
-                    x = np.random.normal(x_positions[i], 0.05, size=len(data))
-                    self.ax_jsc.scatter(x, data, alpha=0.6, s=20, color='darkblue')
-                    med = np.nanmedian(data)
-                    self.ax_jsc.text(x_positions[i] + 0.05, med, f"{med:.2f}", fontsize=8, color='black',
-                                     ha="left", va="center")
-                self.ax_jsc.set_ylabel(self.plot_options["y_axis_labels"].get("Jsc", r"$J_{sc}$ [mA/cm²]"))
-                self.ax_jsc.set_xticklabels([])  # Hide x tick labels for J_sc
-                self.ax_jsc.grid(True)
 
-                self.ax_voc.boxplot(voc_data, positions=x_positions, patch_artist=True,
-                                    boxprops=boxprops, medianprops=medianprops,
-                                    whiskerprops=whiskerprops, flierprops=flierprops)
-                for i, data in enumerate(voc_data):
-                    x = np.random.normal(x_positions[i], 0.05, size=len(data))
-                    self.ax_voc.scatter(x, data, alpha=0.6, s=20, color='darkred')
-                    med = np.nanmedian(data)
-                    self.ax_voc.text(x_positions[i] + 0.05, med, f"{med:.2f}", fontsize=8, color='black',
-                                     ha="left", va="center")
-                self.ax_voc.set_ylabel(self.plot_options["y_axis_labels"].get("Voc", r"$V_{oc}$ [V]"))
-                self.ax_voc.set_xticklabels([])  # Hide tick labels for V_oc
-                self.ax_voc.grid(True)
+                    # Filter NaN values for boxplots
+                    fwd_filtered = fwd[~np.isnan(fwd)]
+                    rev_filtered = rev[~np.isnan(rev)]
 
-                self.ax_eff.boxplot(eff_data, positions=x_positions, patch_artist=True,
-                                    boxprops=boxprops, medianprops=medianprops,
-                                    whiskerprops=whiskerprops, flierprops=flierprops)
-                for i, data in enumerate(eff_data):
-                    x = np.random.normal(x_positions[i], 0.05, size=len(data))
-                    self.ax_eff.scatter(x, data, alpha=0.6, s=20, color='darkgreen')
-                    med = np.nanmedian(data)
-                    self.ax_eff.text(x_positions[i] + 0.05, med, f"{med:.2f}", fontsize=8, color='black',
-                                     ha="left", va="center")
-                self.ax_eff.set_ylabel(self.plot_options["y_axis_labels"].get("Efficiency", "Efficiency [%]"))
-                self.ax_eff.set_xticklabels(labels, rotation=45, ha='right')
-                self.ax_eff.set_xticks(x_positions)
-                self.ax_eff.grid(True)
+                    # Get colors for data points (same as what boxes previously had)
+                    fwd_color = self.plot_options["forward_color"].get("Fill Factor", "blue")
+                    rev_color = self.plot_options["reverse_color"].get("Fill Factor", "red")
 
-                self.ax_ff.boxplot(ff_data, positions=x_positions, patch_artist=True,
-                                   boxprops=boxprops, medianprops=medianprops,
-                                   whiskerprops=whiskerprops, flierprops=flierprops)
-                for i, data in enumerate(ff_data):
-                    x = np.random.normal(x_positions[i], 0.05, size=len(data))
-                    self.ax_ff.scatter(x, data, alpha=0.6, s=20, color='darkmagenta')
-                    med = np.nanmedian(data)
-                    self.ax_ff.text(x_positions[i] + 0.05, med, f"{med:.2f}", fontsize=8, color='black',
-                                    ha="left", va="center")
-                self.ax_ff.set_ylabel(self.plot_options["y_axis_labels"].get("Fill Factor", "Fill Factor [%]"))
+                    if len(fwd_filtered) > 0:
+                        self.ax_ff.boxplot([fwd_filtered], positions=[x_positions_fwd[i]], widths=0.1,
+                                           patch_artist=True,
+                                           boxprops=dict(facecolor='none', color='black'),
+                                           medianprops=dict(color='orange'))
+                        self.ax_ff.scatter(np.full(len(fwd_filtered), x_positions_fwd[i]), fwd_filtered,
+                                           s=20, color=fwd_color, alpha=0.6)
+                        med_fwd = np.nanmedian(fwd_filtered)  # Use filtered data for median
+                        if not np.isnan(med_fwd) and len(fwd_filtered) > 0:
+                            self.ax_ff.text(x_positions_fwd[i] + 0.12, med_fwd, f"{med_fwd:.2f}", fontsize=10,
+                                            color='orange', ha="left", va="center")
+
+                    if len(rev_filtered) > 0:
+                        self.ax_ff.boxplot([rev_filtered], positions=[x_positions_rev[i]], widths=0.1,
+                                           patch_artist=True,
+                                           boxprops=dict(facecolor='none', color='black'),
+                                           medianprops=dict(color='orange'))
+                        self.ax_ff.scatter(np.full(len(rev_filtered), x_positions_rev[i]), rev_filtered,
+                                           s=20, color=rev_color, alpha=0.6)
+                        med_rev = np.nanmedian(rev_filtered)  # Use filtered data for median
+                        if not np.isnan(med_rev) and len(rev_filtered) > 0:
+                            self.ax_ff.text(x_positions_rev[i] + 0.12, med_rev, f"{med_rev:.2f}", fontsize=10,
+                                            color='orange', ha="left", va="center")
+
+                self.ax_ff.set_xticks(np.array([x_positions_fwd[i] + offset / 2 for i in range(len(x_positions_fwd))]))
                 self.ax_ff.set_xticklabels(labels, rotation=45, ha='right')
-                self.ax_ff.set_xticks(x_positions)
-                self.ax_ff.grid(True)
+                self.ax_ff.set_ylabel(self.plot_options["y_axis_labels"].get("Fill Factor", "Fill Factor"))
+                self.ax_ff.grid(False)  # Turn off grid
+            else:
+                # When not separating forward/reverse (show combined data)
+                x_positions = np.array([i + 1 for i in range(len(self.multi_data))])
 
-            # --- Plot IV Curves (common for both modes) ---
-            self.ax_iv.clear()
-            colors = ['blue', 'red', 'green', 'orange', 'purple', 'cyan', 'magenta', 'brown', 'pink', 'gray']
-            for i, item in enumerate(iv_curves):
-                voltage = item[0]
-                y_item = item[1]
-                fname = item[2]
-                if voltage is not None and y_item is not None:
-                    if isinstance(y_item, (list, tuple)):
-                        fwd = y_item[0]
-                        rev = y_item[1]
-                        if fwd is not None:
-                            self.ax_iv.plot(voltage, fwd,
-                                            linestyle=self.plot_options["iv_line_style"]["Fwd"],
-                                            marker=self.plot_options["iv_marker"]["Fwd"],
-                                            markersize=4, color=colors[i % len(colors)],
-                                            label=f"{fname} (Fwd)")
-                        if rev is not None:
-                            self.ax_iv.plot(voltage, rev,
-                                            linestyle=self.plot_options["iv_line_style"]["Rev"],
-                                            marker=self.plot_options["iv_marker"]["Rev"],
-                                            markersize=4, color=colors[i % len(colors)],
-                                            label=f"{fname} (Rev)")
-                    else:
-                        self.ax_iv.plot(voltage, y_item,
-                                        linestyle=self.plot_options["iv_line_style"]["Fwd"],
-                                        marker=self.plot_options["iv_marker"]["Fwd"],
-                                        markersize=4, color=colors[i % len(colors)],
-                                        label=f"{fname} (Fwd)")
+                # J_sc Plot
+                for i, data in enumerate(jsc_data):
+                    if data is None or len(data) == 0:
+                        continue
+                    # Filter NaN values
+                    data_filtered = data[~np.isnan(data)]
+
+                    # Get color for data points (same as what boxes previously had)
+                    data_color = self.plot_options["forward_color"].get("Jsc", "blue")
+
+                    if len(data_filtered) > 0:
+                        self.ax_jsc.boxplot([data_filtered], positions=[x_positions[i]], widths=0.2,
+                                            patch_artist=True,
+                                            boxprops=dict(facecolor='none', color='black'),
+                                            medianprops=dict(color='orange'))
+                        self.ax_jsc.scatter(np.full(len(data_filtered), x_positions[i]), data_filtered,
+                                            s=20, color=data_color, alpha=0.6)
+                        med = np.nanmedian(data_filtered)
+                        if not np.isnan(med) and len(data_filtered) > 0:
+                            self.ax_jsc.text(x_positions[i] + 0.12, med, f"{med:.2f}", fontsize=10,
+                                             color='orange', ha="left", va="center")
+                self.ax_jsc.set_xticks(x_positions)
+                self.ax_jsc.set_xticklabels([])
+                self.ax_jsc.set_ylabel(self.plot_options["y_axis_labels"].get("Jsc", r"$J_{sc}$ [mA/cm²]"))
+                self.ax_jsc.grid(False)  # Turn off grid
+
+                # V_oc Plot
+                for i, data in enumerate(voc_data):
+                    if data is None or len(data) == 0:
+                        continue
+                    # Filter NaN values
+                    data_filtered = data[~np.isnan(data)]
+
+                    # Get color for data points (same as what boxes previously had)
+                    data_color = self.plot_options["forward_color"].get("Voc", "blue")
+
+                    if len(data_filtered) > 0:
+                        self.ax_voc.boxplot([data_filtered], positions=[x_positions[i]], widths=0.2,
+                                            patch_artist=True,
+                                            boxprops=dict(facecolor='none', color='black'),
+                                            medianprops=dict(color='orange'))
+                        self.ax_voc.scatter(np.full(len(data_filtered), x_positions[i]), data_filtered,
+                                            s=20, color=data_color, alpha=0.6)
+                        med = np.nanmedian(data_filtered)
+                        if not np.isnan(med) and len(data_filtered) > 0:
+                            self.ax_voc.text(x_positions[i] + 0.12, med, f"{med:.2f}", fontsize=10,
+                                             color='orange', ha="left", va="center")
+                self.ax_voc.set_xticks(x_positions)
+                self.ax_voc.set_xticklabels([])
+                self.ax_voc.set_ylabel(self.plot_options["y_axis_labels"].get("Voc", r"$V_{oc}$ [V]"))
+                self.ax_voc.grid(False)  # Turn off grid
+
+                # Efficiency Plot
+                for i, data in enumerate(eff_data):
+                    if data is None or len(data) == 0:
+                        continue
+                    # Filter NaN values
+                    data_filtered = data[~np.isnan(data)]
+
+                    # Get color for data points (same as what boxes previously had)
+                    data_color = self.plot_options["forward_color"].get("Efficiency", "blue")
+
+                    if len(data_filtered) > 0:
+                        self.ax_eff.boxplot([data_filtered], positions=[x_positions[i]], widths=0.2,
+                                            patch_artist=True,
+                                            boxprops=dict(facecolor='none', color='black'),
+                                            medianprops=dict(color='orange'))
+                        self.ax_eff.scatter(np.full(len(data_filtered), x_positions[i]), data_filtered,
+                                            s=20, color=data_color, alpha=0.6)
+                        med = np.nanmedian(data_filtered)
+                        if not np.isnan(med) and len(data_filtered) > 0:
+                            self.ax_eff.text(x_positions[i] + 0.12, med, f"{med:.2f}", fontsize=10,
+                                             color='orange', ha="left", va="center")
+                self.ax_eff.set_xticks(x_positions)
+                self.ax_eff.set_xticklabels(labels, rotation=45, ha='right')
+                self.ax_eff.set_ylabel(self.plot_options["y_axis_labels"].get("Efficiency", "Efficiency [%]"))
+                self.ax_eff.grid(False)  # Already set to False in original
+
+                # Fill Factor Plot
+                for i, data in enumerate(ff_data):
+                    if data is None or len(data) == 0:
+                        continue
+                    # Filter NaN values
+                    data_filtered = data[~np.isnan(data)]
+
+                    # Get color for data points (same as what boxes previously had)
+                    data_color = self.plot_options["forward_color"].get("Fill Factor", "blue")
+
+                    if len(data_filtered) > 0:
+                        self.ax_ff.boxplot([data_filtered], positions=[x_positions[i]], widths=0.2,
+                                           patch_artist=True,
+                                           boxprops=dict(facecolor='none', color='black'),
+                                           medianprops=dict(color='orange'))
+                        self.ax_ff.scatter(np.full(len(data_filtered), x_positions[i]), data_filtered,
+                                           s=20, color=data_color, alpha=0.6)
+                        med = np.nanmedian(data_filtered)
+                        if not np.isnan(med) and len(data_filtered) > 0:
+                            self.ax_ff.text(x_positions[i] + 0.12, med, f"{med:.2f}", fontsize=10,
+                                            color='orange', ha="left", va="center")
+                self.ax_ff.set_xticks(x_positions)
+                self.ax_ff.set_xticklabels(labels, rotation=45, ha='right')
+                self.ax_ff.set_ylabel(self.plot_options["y_axis_labels"].get("Fill Factor", "Fill Factor"))
+                self.ax_ff.grid(False)  # Turn off grid
+
+            # --- Plot I-V curves ---
             self.ax_iv.set_xlabel(self.plot_options["x_axis_labels"].get("IV", "Voltage [V]"))
             self.ax_iv.set_ylabel(self.plot_options["y_axis_labels"].get("IV", "J [mA/cm²]"))
-            self.ax_iv.legend(loc='upper left')
-            self.ax_iv.grid(True)
 
+            colors = ['blue', 'red', 'green', 'orange', 'purple', 'cyan', 'magenta', 'brown', 'pink', 'gray']
+
+            for i, (voltage, y_data, label) in enumerate(iv_curves):
+                if voltage is None or y_data is None:
+                    continue
+
+                color = colors[i % len(colors)]
+                if isinstance(y_data, tuple):  # Forward and reverse data
+                    fwd, rev = y_data
+                    if fwd is not None:
+                        self.ax_iv.plot(voltage, fwd,
+                                        linestyle=self.plot_options["iv_line_style"]["Fwd"],
+                                        marker=self.plot_options["iv_marker"]["Fwd"],
+                                        markersize=4, color=color,
+                                        label=f"{label} (Fwd)")
+                    if rev is not None:
+                        self.ax_iv.plot(voltage, rev,
+                                        linestyle=self.plot_options["iv_line_style"]["Rev"],
+                                        marker=self.plot_options["iv_marker"]["Rev"],
+                                        markersize=4, color=color,
+                                        label=f"{label} (Rev)")
+                else:  # Single dataset
+                    self.ax_iv.plot(voltage, y_data,
+                                    linestyle=self.plot_options["iv_line_style"]["Fwd"],
+                                    marker=self.plot_options["iv_marker"]["Fwd"],
+                                    markersize=4, color=color,
+                                    label=label)
+
+            self.ax_iv.legend(loc='upper left', fontsize=8)
+            self.ax_iv.grid(False)  # Turn off grid
             # --- Overall Legend (top left, one row) ---
             median_line = mlines.Line2D([], [], color='orange', linestyle='-', linewidth=2, label='Median')
             box_patch = mpatches.Patch(facecolor='none', edgecolor='black', label='IQR Box')
@@ -1089,11 +1254,13 @@ class SuSiAnalysisTool:
                                         label='Data Points')
             self.fig.legend(handles=[median_line, box_patch, data_marker],
                             loc='upper left', bbox_to_anchor=(0.01, 0.99), ncol=3, fontsize=10)
-
             self.fig.suptitle(self.plot_title_var.get(), fontsize=16, y=0.98)
             self.canvas.draw()
+
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to generate multiple-file plots: {e}")
+            messagebox.showerror("Error", f"Error generating multiple plots: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
     def save_plots(self):
         plot_title = self.fig._suptitle.get_text() if self.fig._suptitle else "Untitled_Plot"
